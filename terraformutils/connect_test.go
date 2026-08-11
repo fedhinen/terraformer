@@ -15,11 +15,8 @@
 package terraformutils
 
 import (
-	"log"
 	"reflect"
 	"testing"
-
-	"github.com/zclconf/go-cty/cty"
 )
 
 func TestSimpleReference(t *testing.T) {
@@ -140,24 +137,10 @@ func prepareNoAttrs(id, resourceType string) Resource {
 func prepare(id, resourceType string, attributes map[string]string, attributesParsed map[string]interface{}) Resource {
 	r := NewResource(id, "name-"+resourceType, resourceType, "provider", attributes, []string{}, map[string]interface{}{})
 	r.InstanceState.Attributes["id"] = r.InstanceState.ID
-	err := r.ParseTFstate(&MockedFlatmapParser{
-		attributesParsed: attributesParsed,
-	}, cty.NilType)
-	if err != nil {
-		log.Println(err)
-	}
+	r.Item = attributesParsed
 	return r
 }
 
 func mapI(key string, value interface{}) map[string]interface{} {
 	return map[string]interface{}{key: value}
-}
-
-type MockedFlatmapParser struct {
-	FlatmapParser
-	attributesParsed map[string]interface{}
-}
-
-func (p *MockedFlatmapParser) Parse(ty cty.Type) (map[string]interface{}, error) {
-	return p.attributesParsed, nil
 }

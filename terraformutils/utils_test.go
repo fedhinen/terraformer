@@ -18,25 +18,33 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/compatibility"
 )
 
 func TestPrintTfStateWithProviderSourceWritesVersion4State(t *testing.T) {
 	data, err := PrintTfStateWithProviderSource([]Resource{{
-		ResourceName: "fixture",
-		InstanceInfo: &terraform.InstanceInfo{Type: "aws_vpc", Id: "aws_vpc.fixture"},
-		StateJSON:    []byte(`{"id":"vpc-123"}`),
+		ResourceName:  "fixture",
+		InstanceInfo:  &ResourceAddress{Type: "aws_vpc", Id: "aws_vpc.fixture"},
+		InstanceState: &ResourceState{Private: []byte("opaque")},
+		StateJSON:     []byte(`{"id":"vpc-123"}`),
+		Outputs:       map[string]*OutputState{"aws_vpc_fixture_id": {Type: "string", Value: "vpc-123"}},
 	}}, "registry.terraform.io/hashicorp/aws")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	var state struct {
-		Version   int `json:"version"`
+		Version          int    `json:"version"`
+		TerraformVersion string `json:"terraform_version"`
+		Outputs          map[string]struct {
+			Value interface{} `json:"value"`
+			Type  string      `json:"type"`
+		} `json:"outputs"`
 		Resources []struct {
 			Provider  string `json:"provider"`
 			Instances []struct {
 				Attributes map[string]string `json:"attributes"`
+				Private    []byte            `json:"private"`
 			} `json:"instances"`
 		} `json:"resources"`
 	}
@@ -46,10 +54,19 @@ func TestPrintTfStateWithProviderSourceWritesVersion4State(t *testing.T) {
 	if state.Version != 4 {
 		t.Fatalf("state version = %d, want 4", state.Version)
 	}
+	if state.TerraformVersion != compatibility.TerraformVersion {
+		t.Fatalf("terraform version = %q, want %q", state.TerraformVersion, compatibility.TerraformVersion)
+	}
 	if got := state.Resources[0].Provider; got != `provider["registry.terraform.io/hashicorp/aws"]` {
 		t.Fatalf("provider address = %q", got)
 	}
 	if got := state.Resources[0].Instances[0].Attributes["id"]; got != "vpc-123" {
 		t.Fatalf("resource ID = %q", got)
+	}
+	if got := string(state.Resources[0].Instances[0].Private); got != "opaque" {
+		t.Fatalf("private state = %q", got)
+	}
+	if output := state.Outputs["aws_vpc_fixture_id"]; output.Value != "vpc-123" || output.Type != "string" {
+		t.Fatalf("output = %#v", output)
 	}
 }

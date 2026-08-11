@@ -223,6 +223,7 @@ func hclPrint(data interface{}, mapsObjects map[string]struct{}, sort bool) ([]b
 func terraform12Adjustments(formatted []byte, mapsObjects map[string]struct{}) []byte {
 	singletonListFix := regexp.MustCompile(`^\s*\w+ = {`)
 	singletonListFixEnd := regexp.MustCompile(`^\s*}`)
+	objectBlock := regexp.MustCompile(`^(\s*)([[:alnum:]_-]+) \{$`)
 
 	s := string(formatted)
 	old := " = {"
@@ -230,6 +231,12 @@ func terraform12Adjustments(formatted []byte, mapsObjects map[string]struct{}) [
 	lines := strings.Split(s, "\n")
 	prefix := make([]string, 0)
 	for i, line := range lines {
+		if match := objectBlock.FindStringSubmatch(line); len(match) == 3 {
+			if _, isMap := mapsObjects[match[2]]; isMap {
+				lines[i] = match[1] + match[2] + " = {"
+				continue
+			}
+		}
 		if singletonListFixEnd.MatchString(line) && len(prefix) > 0 {
 			prefix = prefix[:len(prefix)-1]
 			continue
@@ -237,7 +244,7 @@ func terraform12Adjustments(formatted []byte, mapsObjects map[string]struct{}) [
 		if !singletonListFix.MatchString(line) {
 			continue
 		}
-		key := strings.Trim(strings.Split(line, old)[0], " ")
+		key := strings.Trim(strings.Split(line, old)[0], " \"")
 		prefix = append(prefix, key)
 		if _, exist := mapsObjects[strings.Join(prefix, ".")]; exist {
 			continue
@@ -308,6 +315,15 @@ func HclPrintResource(resources []Resource, providerData map[string]interface{},
 				key := strings.TrimSuffix(k, ".%")
 				mapsObjects[indexRe.ReplaceAllString(key, "")] = struct{}{}
 			}
+		}
+		for _, key := range res.MapAttributes {
+			normalized := indexRe.ReplaceAllString(key, "")
+			mapsObjects[normalized] = struct{}{}
+			mapsObjects[strings.Join([]string{"resource", res.InstanceInfo.Type, res.ResourceName, normalized}, ".")] = struct{}{}
+			// Sanitized resource names contain hyphens and are skipped by the
+			// legacy HCL1 adjustment's identifier matcher.
+			mapsObjects[strings.Join([]string{"resource", res.InstanceInfo.Type, normalized}, ".")] = struct{}{}
+			mapsObjects[strings.Join([]string{res.InstanceInfo.Type, normalized}, ".")] = struct{}{}
 		}
 	}
 

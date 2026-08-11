@@ -52,3 +52,18 @@ func TestPrintResource(t *testing.T) {
 		t.Errorf("failed to parse data %s", string(data))
 	}
 }
+
+func TestPrintResourceUsesTypedMapMetadata(t *testing.T) {
+	resource := prepare("ID1", "type1", map[string]string{}, map[string]interface{}{
+		"id":   "ID1",
+		"tags": map[string]interface{}{"Name": "fixture"},
+	})
+	resource.MapAttributes = []string{"tags"}
+	data, err := HclPrintResource([]Resource{resource}, map[string]interface{}{}, "hcl", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tags = {") {
+		t.Fatalf("map rendered as a block:\n%s", data)
+	}
+}

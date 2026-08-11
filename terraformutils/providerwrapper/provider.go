@@ -15,26 +15,25 @@
 package providerwrapper //nolint
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
-	"time"
 
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/compatibility"
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/protocolv5"
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/terraformerstring"
 
+	"github.com/hashicorp/terraform-plugin-go/tfprotov5"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/zclconf/go-cty/cty"
-
-	"github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/go-plugin"
-	"github.com/hashicorp/terraform/configs/configschema"
-	tfplugin "github.com/hashicorp/terraform/plugin"
-	"github.com/hashicorp/terraform/providers"
-	"github.com/hashicorp/terraform/terraform"
-	"github.com/hashicorp/terraform/version"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
 // DefaultDataDir is the default directory for storing local data.
@@ -49,31 +48,20 @@ const DefaultPluginVendorDirV12 = "terraform.d/plugins/" + pluginMachineName
 const pluginMachineName = runtime.GOOS + "_" + runtime.GOARCH
 
 type ProviderWrapper struct {
-	Provider     *tfplugin.GRPCProvider
-	client       *plugin.Client
-	rpcClient    plugin.ClientProtocol
+	client       protocolv5.ProviderClient
 	providerName string
 	config       cty.Value
-	schema       *providers.GetSchemaResponse
-	retryCount   int
-	retrySleepMs int
+	schema       *tfprotov5.GetProviderSchemaResponse
 }
 
 func NewProviderWrapper(providerName string, providerConfig cty.Value, verbose bool, options ...map[string]int) (*ProviderWrapper, error) {
-	p := &ProviderWrapper{retryCount: 5, retrySleepMs: 300}
+	p := &ProviderWrapper{}
 	p.providerName = providerName
 	p.config = providerConfig
 
-	if len(options) > 0 {
-		retryCount, hasOption := options[0]["retryCount"]
-		if hasOption {
-			p.retryCount = retryCount
-		}
-		retrySleepMs, hasOption := options[0]["retrySleepMs"]
-		if hasOption {
-			p.retrySleepMs = retrySleepMs
-		}
-	}
+	// Kept in the signature while command-line retry flags are retired. Protocol
+	// errors are not assumed to be transient and are never retried blindly.
+	_ = options
 
 	err := p.initProvider(verbose)
 
@@ -81,33 +69,33 @@ func NewProviderWrapper(providerName string, providerConfig cty.Value, verbose b
 }
 
 func (p *ProviderWrapper) Kill() {
-	p.client.Kill()
+	if p.client != nil {
+		if err := p.client.Close(); err != nil {
+			log.Printf("closing provider %s: %v", p.providerName, err)
+		}
+	}
 }
 
-func (p *ProviderWrapper) GetSchema() *providers.GetSchemaResponse {
-	if p.schema == nil {
-		r := p.Provider.GetSchema()
-		p.schema = &r
-	}
+func (p *ProviderWrapper) GetSchema() *tfprotov5.GetProviderSchemaResponse {
 	return p.schema
 }
 
 func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[string][]string, error) {
 	r := p.GetSchema()
 
-	if r.Diagnostics.HasErrors() {
-		return nil, r.Diagnostics.Err()
+	if err := diagnosticError("get provider schema", r.Diagnostics); err != nil {
+		return nil, err
 	}
 	readOnlyAttributes := map[string][]string{}
-	for resourceName, obj := range r.ResourceTypes {
+	for resourceName, obj := range r.ResourceSchemas {
 		if terraformerstring.ContainsString(resourceTypes, resourceName) {
 			readOnlyAttributes[resourceName] = append(readOnlyAttributes[resourceName], "^id$")
-			for k, v := range obj.Block.Attributes {
+			for _, v := range obj.Block.Attributes {
 				if !v.Optional && !v.Required {
-					if v.Type.IsListType() || v.Type.IsSetType() {
-						readOnlyAttributes[resourceName] = append(readOnlyAttributes[resourceName], "^"+k+"\\.(.*)")
+					if v.Type.Is(tftypes.List{}) || v.Type.Is(tftypes.Set{}) {
+						readOnlyAttributes[resourceName] = append(readOnlyAttributes[resourceName], "^"+v.Name+"\\.(.*)")
 					} else {
-						readOnlyAttributes[resourceName] = append(readOnlyAttributes[resourceName], "^"+k+"$")
+						readOnlyAttributes[resourceName] = append(readOnlyAttributes[resourceName], "^"+v.Name+"$")
 					}
 				}
 			}
@@ -117,94 +105,92 @@ func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[str
 	return readOnlyAttributes, nil
 }
 
-func (p *ProviderWrapper) readObjBlocks(block map[string]*configschema.NestedBlock, readOnlyAttributes []string, parent string) []string {
-	for k, v := range block {
-		if len(v.BlockTypes) > 0 {
+func (p *ProviderWrapper) readObjBlocks(block []*tfprotov5.SchemaNestedBlock, readOnlyAttributes []string, parent string) []string {
+	for _, v := range block {
+		k := v.TypeName
+		if len(v.Block.BlockTypes) > 0 {
 			if parent == "-1" {
-				readOnlyAttributes = p.readObjBlocks(v.BlockTypes, readOnlyAttributes, k)
+				readOnlyAttributes = p.readObjBlocks(v.Block.BlockTypes, readOnlyAttributes, k)
 			} else {
-				readOnlyAttributes = p.readObjBlocks(v.BlockTypes, readOnlyAttributes, parent+"\\.[0-9]+\\."+k)
+				readOnlyAttributes = p.readObjBlocks(v.Block.BlockTypes, readOnlyAttributes, parent+"\\.[0-9]+\\."+k)
 			}
 		}
 		fieldCount := 0
-		for key, l := range v.Attributes {
+		for _, l := range v.Block.Attributes {
 			if !l.Optional && !l.Required {
 				fieldCount++
+				key := l.Name
 				switch v.Nesting {
-				case configschema.NestingList:
+				case tfprotov5.SchemaNestedBlockNestingModeList:
 					if parent == "-1" {
 						readOnlyAttributes = append(readOnlyAttributes, "^"+k+"\\.[0-9]+\\."+key+"($|\\.[0-9]+|\\.#)")
 					} else {
 						readOnlyAttributes = append(readOnlyAttributes, "^"+parent+"\\.(.*)\\."+key+"$")
 					}
-				case configschema.NestingSet:
+				case tfprotov5.SchemaNestedBlockNestingModeSet:
 					if parent == "-1" {
 						readOnlyAttributes = append(readOnlyAttributes, "^"+k+"\\.[0-9]+\\."+key+"$")
 					} else {
 						readOnlyAttributes = append(readOnlyAttributes, "^"+parent+"\\.(.*)\\."+key+"($|\\.(.*))")
 					}
-				case configschema.NestingMap:
+				case tfprotov5.SchemaNestedBlockNestingModeMap:
 					readOnlyAttributes = append(readOnlyAttributes, parent+"\\."+key)
 				default:
 					readOnlyAttributes = append(readOnlyAttributes, parent+"\\."+key+"$")
 				}
 			}
 		}
-		if fieldCount == len(v.Block.Attributes) && fieldCount > 0 && len(v.BlockTypes) == 0 {
+		if fieldCount == len(v.Block.Attributes) && fieldCount > 0 && len(v.Block.BlockTypes) == 0 {
 			readOnlyAttributes = append(readOnlyAttributes, "^"+k)
 		}
 	}
 	return readOnlyAttributes
 }
 
-func (p *ProviderWrapper) Refresh(info *terraform.InstanceInfo, state *terraform.InstanceState) (*terraform.InstanceState, error) {
-	schema := p.GetSchema()
-	impliedType := schema.ResourceTypes[info.Type].Block.ImpliedType()
-	priorState, err := state.AttrsAsObjectValue(impliedType)
+// RefreshValue reads existing state once and falls back to the provider's
+// import RPC only when the read returns error diagnostics.
+func (p *ProviderWrapper) RefreshValue(resourceType, id string, prior tftypes.Value, private []byte) (tftypes.Value, []byte, error) {
+	resourceSchema, ok := p.schema.ResourceSchemas[resourceType]
+	if !ok {
+		return tftypes.Value{}, nil, fmt.Errorf("provider %s has no schema for %s", p.providerName, resourceType)
+	}
+	dynamic, err := tfprotov5.NewDynamicValue(resourceSchema.ValueType(), prior)
 	if err != nil {
-		return nil, err
+		return tftypes.Value{}, nil, fmt.Errorf("encode prior state for %s: %w", resourceType, err)
 	}
-	successReadResource := false
-	resp := providers.ReadResourceResponse{}
-	for i := 0; i < p.retryCount; i++ {
-		resp = p.Provider.ReadResource(providers.ReadResourceRequest{
-			TypeName:   info.Type,
-			PriorState: priorState,
-			Private:    []byte{},
-		})
-		if resp.Diagnostics.HasErrors() {
-			log.Println(resp.Diagnostics.Err())
-			log.Printf("WARN: Fail read resource from provider, wait %dms before retry\n", p.retrySleepMs)
-			time.Sleep(time.Duration(p.retrySleepMs) * time.Millisecond)
-			continue
-		} else {
-			successReadResource = true
-			break
+	resp, err := p.client.ReadResource(context.Background(), &tfprotov5.ReadResourceRequest{TypeName: resourceType, CurrentState: &dynamic, Private: private})
+	if err != nil {
+		return tftypes.Value{}, nil, fmt.Errorf("read %s %q: %w", resourceType, id, err)
+	}
+	if diagnosticError("read resource", resp.Diagnostics) != nil {
+		importResponse, importErr := p.client.ImportResourceState(context.Background(), &tfprotov5.ImportResourceStateRequest{TypeName: resourceType, ID: id})
+		if importErr != nil {
+			return tftypes.Value{}, nil, fmt.Errorf("import %s %q after read diagnostics: %w", resourceType, id, importErr)
 		}
-	}
-
-	if !successReadResource {
-		log.Println("Fail read resource from provider, trying import command")
-		// retry with regular import command - without resource attributes
-		importResponse := p.Provider.ImportResourceState(providers.ImportResourceStateRequest{
-			TypeName: info.Type,
-			ID:       state.ID,
-		})
-		if importResponse.Diagnostics.HasErrors() {
-			return nil, resp.Diagnostics.Err()
+		if err := diagnosticError("import resource", importResponse.Diagnostics); err != nil {
+			return tftypes.Value{}, nil, err
 		}
 		if len(importResponse.ImportedResources) == 0 {
-			return nil, errors.New("not able to import resource for a given ID")
+			return tftypes.Value{}, nil, errors.New("provider returned no resources for the given import ID")
 		}
-		return terraform.NewInstanceStateShimmedFromValue(importResponse.ImportedResources[0].State, int(schema.ResourceTypes[info.Type].Version)), nil
+		if len(importResponse.ImportedResources) != 1 {
+			return tftypes.Value{}, nil, fmt.Errorf("provider returned %d resources for %s %q; Terraformer's resource model cannot represent a multi-resource import", len(importResponse.ImportedResources), resourceType, id)
+		}
+		imported := importResponse.ImportedResources[0]
+		value, err := imported.State.Unmarshal(resourceSchema.ValueType())
+		return value, imported.Private, err
 	}
-
-	if resp.NewState.IsNull() {
-		msg := fmt.Sprintf("ERROR: Read resource response is null for resource %s", info.Id)
-		return nil, errors.New(msg)
+	if err := diagnosticError("read resource", resp.Diagnostics); err != nil {
+		return tftypes.Value{}, nil, err
 	}
-
-	return terraform.NewInstanceStateShimmedFromValue(resp.NewState, int(schema.ResourceTypes[info.Type].Version)), nil
+	value, err := resp.NewState.Unmarshal(resourceSchema.ValueType())
+	if err != nil {
+		return tftypes.Value{}, nil, fmt.Errorf("decode state for %s %q: %w", resourceType, id, err)
+	}
+	if value.IsNull() {
+		return tftypes.Value{}, nil, fmt.Errorf("read resource response is null for %s %q", resourceType, id)
+	}
+	return value, resp.Private, nil
 }
 
 func (p *ProviderWrapper) initProvider(verbose bool) error {
@@ -212,46 +198,91 @@ func (p *ProviderWrapper) initProvider(verbose bool) error {
 	if err != nil {
 		return err
 	}
-	options := hclog.LoggerOptions{
-		Name:   "plugin",
-		Level:  hclog.Error,
-		Output: os.Stdout,
-	}
-	if verbose {
-		options.Level = hclog.Trace
-	}
-	logger := hclog.New(&options)
-	p.client = plugin.NewClient(
-		&plugin.ClientConfig{
-			Cmd:              exec.Command(providerFilePath),
-			HandshakeConfig:  tfplugin.Handshake,
-			VersionedPlugins: tfplugin.VersionedPlugins,
-			Managed:          true,
-			Logger:           logger,
-			AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
-			AutoMTLS:         true,
-		})
-	p.rpcClient, err = p.client.Client()
+	p.client, err = protocolv5.LaunchWithLogging(context.Background(), providerFilePath, verbose)
 	if err != nil {
 		return err
 	}
-	raw, err := p.rpcClient.Dispense(tfplugin.ProviderPluginName)
+	p.schema, err = p.client.GetProviderSchema(context.Background(), &tfprotov5.GetProviderSchemaRequest{})
 	if err != nil {
 		return err
 	}
-
-	p.Provider = raw.(*tfplugin.GRPCProvider)
-
-	config, err := p.GetSchema().Provider.Block.CoerceValue(p.config)
+	if err := diagnosticError("get provider schema", p.schema.Diagnostics); err != nil {
+		return err
+	}
+	config, err := providerConfigValue(p.config, p.schema.Provider.ValueType())
 	if err != nil {
 		return err
 	}
-	p.Provider.Configure(providers.ConfigureRequest{
-		TerraformVersion: version.Version,
-		Config:           config,
-	})
+	dynamic, err := tfprotov5.NewDynamicValue(p.schema.Provider.ValueType(), config)
+	if err != nil {
+		return err
+	}
+	prepared, err := p.client.PrepareProviderConfig(context.Background(), &tfprotov5.PrepareProviderConfigRequest{Config: &dynamic})
+	if err != nil {
+		return err
+	}
+	if err := diagnosticError("prepare provider config", prepared.Diagnostics); err != nil {
+		return err
+	}
+	preparedConfig := prepared.PreparedConfig
+	if preparedConfig == nil {
+		preparedConfig = &dynamic
+	}
+	configured, err := p.client.ConfigureProvider(context.Background(), &tfprotov5.ConfigureProviderRequest{TerraformVersion: compatibility.TerraformVersion, Config: preparedConfig})
+	if err != nil {
+		return err
+	}
+	return diagnosticError("configure provider", configured.Diagnostics)
+}
 
-	return nil
+func providerConfigValue(config cty.Value, typ tftypes.Type) (tftypes.Value, error) {
+	encoded, err := ctyjson.Marshal(config, config.Type())
+	if err != nil {
+		return tftypes.Value{}, fmt.Errorf("encode provider config: %w", err)
+	}
+	var supplied map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &supplied); err != nil {
+		return tftypes.Value{}, fmt.Errorf("provider config must be an object: %w", err)
+	}
+	objectType, ok := typ.(tftypes.Object)
+	if !ok {
+		return tftypes.Value{}, fmt.Errorf("provider schema must be an object, got %T", typ)
+	}
+	complete := make(map[string]json.RawMessage, len(objectType.AttributeTypes))
+	for name := range objectType.AttributeTypes {
+		complete[name] = json.RawMessage("null")
+	}
+	for name, value := range supplied {
+		if _, ok := complete[name]; ok {
+			complete[name] = value
+		}
+	}
+	encoded, err = json.Marshal(complete)
+	if err != nil {
+		return tftypes.Value{}, err
+	}
+	return tftypes.ValueFromJSON(encoded, typ) //nolint:staticcheck
+}
+
+func diagnosticError(operation string, diagnostics []*tfprotov5.Diagnostic) error {
+	messages := make([]string, 0)
+	for _, diagnostic := range diagnostics {
+		if diagnostic.Severity != tfprotov5.DiagnosticSeverityError {
+			continue
+		}
+		message := diagnostic.Summary
+		if diagnostic.Detail != "" {
+			message += ": " + diagnostic.Detail
+		}
+		if diagnostic.Attribute != nil {
+			message += fmt.Sprintf(" (attribute %v)", diagnostic.Attribute)
+		}
+		messages = append(messages, message)
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s: %s", operation, strings.Join(messages, "; "))
 }
 
 func getProviderFileName(providerName string) (string, error) {
@@ -271,46 +302,73 @@ func getProviderFileName(providerName string) (string, error) {
 }
 
 func getProviderFileNameV13andV14(prefix, providerName string) (string, error) {
-	// Read terraform v14 file path
-	registryDir := prefix + string(os.PathSeparator) + "providers" + string(os.PathSeparator) +
-		"registry.terraform.io"
-	providerDirs, err := os.ReadDir(registryDir)
-	if err != nil {
-		// Read terraform v13 file path
-		registryDir = prefix + string(os.PathSeparator) + "plugins" + string(os.PathSeparator) +
-			"registry.terraform.io"
-		providerDirs, err = os.ReadDir(registryDir)
-		if err != nil {
-			return "", err
-		}
-	}
-	providerFilePath := ""
-	for _, providerDir := range providerDirs {
-		pluginPath := registryDir + string(os.PathSeparator) + providerDir.Name() +
-			string(os.PathSeparator) + providerName
-		dirs, err := os.ReadDir(pluginPath)
+	type candidate struct{ version, path string }
+	var selected candidate
+	foundRegistry := false
+	for _, layout := range []string{"providers", "plugins", "plugin-cache"} {
+		registryDir := filepath.Join(prefix, layout, "registry.terraform.io")
+		namespaces, err := os.ReadDir(registryDir)
 		if err != nil {
 			continue
 		}
-		for _, dir := range dirs {
-			if !dir.IsDir() {
+		foundRegistry = true
+		for _, namespace := range namespaces {
+			versions, err := os.ReadDir(filepath.Join(registryDir, namespace.Name(), providerName))
+			if err != nil {
 				continue
 			}
-			for _, dir := range dirs {
-				fullPluginPath := pluginPath + string(os.PathSeparator) + dir.Name() +
-					string(os.PathSeparator) + runtime.GOOS + "_" + runtime.GOARCH
-				files, err := os.ReadDir(fullPluginPath)
-				if err == nil {
-					for _, file := range files {
-						if strings.HasPrefix(file.Name(), "terraform-provider-"+providerName) {
-							providerFilePath = fullPluginPath + string(os.PathSeparator) + file.Name()
-						}
+			for _, version := range versions {
+				if !version.IsDir() {
+					continue
+				}
+				machineDir := filepath.Join(registryDir, namespace.Name(), providerName, version.Name(), pluginMachineName)
+				files, err := os.ReadDir(machineDir)
+				if err != nil {
+					continue
+				}
+				for _, file := range files {
+					if file.IsDir() || !strings.HasPrefix(file.Name(), "terraform-provider-"+providerName) {
+						continue
+					}
+					current := candidate{version: version.Name(), path: filepath.Join(machineDir, file.Name())}
+					if selected.path == "" || compareProviderVersions(current.version, selected.version) > 0 {
+						selected = current
 					}
 				}
 			}
 		}
 	}
-	return providerFilePath, nil
+	if selected.path != "" {
+		return selected.path, nil
+	}
+	if !foundRegistry {
+		return "", os.ErrNotExist
+	}
+	return "", nil
+}
+
+func compareProviderVersions(left, right string) int {
+	leftParts, rightParts := strings.Split(strings.TrimPrefix(left, "v"), "."), strings.Split(strings.TrimPrefix(right, "v"), ".")
+	length := len(leftParts)
+	if len(rightParts) > length {
+		length = len(rightParts)
+	}
+	for i := 0; i < length; i++ {
+		var leftNumber, rightNumber int
+		if i < len(leftParts) {
+			leftNumber, _ = strconv.Atoi(strings.SplitN(leftParts[i], "-", 2)[0])
+		}
+		if i < len(rightParts) {
+			rightNumber, _ = strconv.Atoi(strings.SplitN(rightParts[i], "-", 2)[0])
+		}
+		if leftNumber < rightNumber {
+			return -1
+		}
+		if leftNumber > rightNumber {
+			return 1
+		}
+	}
+	return strings.Compare(left, right)
 }
 
 func getProviderFileNameV12(providerName string) (string, error) {

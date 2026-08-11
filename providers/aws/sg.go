@@ -25,7 +25,6 @@ import (
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/hashicorp/terraform/flatmap"
 	"gonum.org/v1/gonum/graph"
 	simplegraph "gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
@@ -102,23 +101,23 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 	if rule.UserIdGroupPairs != nil && len(rule.UserIdGroupPairs) > 0 {
 		if len(rule.IpRanges) > 0 { // we must unwind coupled CIDR IPv4 range + security group rules
 			attributes := baseRuleAttributes(ruleType, rule, sg)
-			resources = append(resources, terraformutils.NewResource(
+			resources = append(resources, terraformutils.NewResourceFromDiscovery(
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
 		if len(rule.Ipv6Ranges) > 0 { // we must unwind coupled CIDR IPv6 range + security group rules
 			attributes := baseRuleAttributes(ruleType, rule, sg)
-			resources = append(resources, terraformutils.NewResource(
+			resources = append(resources, terraformutils.NewResourceFromDiscovery(
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -132,23 +131,23 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				attributes["source_security_group_id"] = *groupPair.GroupId
 			}
 
-			resources = append(resources, terraformutils.NewResource(
+			resources = append(resources, terraformutils.NewResourceFromDiscovery(
 				permissionID(*sg.GroupId, ruleType, *groupPair.GroupId, rule),
 				permissionID(*sg.GroupId, ruleType, *groupPair.GroupId, rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
 	} else {
 		attributes := baseRuleAttributes(ruleType, rule, sg)
-		resources = append(resources, terraformutils.NewResource(
+		resources = append(resources, terraformutils.NewResourceFromDiscovery(
 			permissionID(*sg.GroupId, ruleType, "", rule),
 			permissionID(*sg.GroupId, ruleType, "", rule),
 			"aws_security_group_rule",
 			"aws",
-			flatmap.Flatten(attributes),
+			attributes,
 			SgAllowEmptyValues,
 			map[string]interface{}{}))
 	}

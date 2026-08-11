@@ -20,8 +20,6 @@ import (
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper"
-
-	"github.com/hashicorp/terraform/terraform"
 )
 
 func OutputHclFiles(resources []terraformutils.Resource, provider terraformutils.ProviderGenerator, path string, serviceName string, isCompact bool, output string, sort bool) error {
@@ -56,13 +54,13 @@ func OutputHclFiles(resources []terraformutils.Resource, provider terraformutils
 	outputsByResource := map[string]map[string]interface{}{}
 
 	for i, r := range resources {
-		outputState := map[string]*terraform.OutputState{}
+		outputState := map[string]*terraformutils.OutputState{}
 		outputsByResource[r.InstanceInfo.Type+"_"+r.ResourceName+"_"+r.GetIDKey()] = map[string]interface{}{
 			"value": "${" + r.InstanceInfo.Type + "." + r.ResourceName + "." + r.GetIDKey() + "}",
 		}
-		outputState[r.InstanceInfo.Type+"_"+r.ResourceName+"_"+r.GetIDKey()] = &terraform.OutputState{
+		outputState[r.InstanceInfo.Type+"_"+r.ResourceName+"_"+r.GetIDKey()] = &terraformutils.OutputState{
 			Type:  "string",
-			Value: r.InstanceState.Attributes[r.GetIDKey()],
+			Value: r.StateAttribute(r.GetIDKey()),
 		}
 		for _, v := range provider.GetResourceConnections() {
 			for k, ids := range v {
@@ -76,9 +74,9 @@ func OutputHclFiles(resources []terraformutils.Resource, provider terraformutils
 						outputsByResource[linkKey] = map[string]interface{}{
 							"value": "${" + r.InstanceInfo.Type + "." + r.ResourceName + "." + key + "}",
 						}
-						outputState[linkKey] = &terraform.OutputState{
+						outputState[linkKey] = &terraformutils.OutputState{
 							Type:  "string",
-							Value: r.InstanceState.Attributes[ids[1]],
+							Value: r.StateAttribute(ids[1]),
 						}
 					}
 				}

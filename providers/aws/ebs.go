@@ -17,11 +17,11 @@ package aws
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/hashicorp/terraform/helper/hashcode"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -34,7 +34,7 @@ type EbsGenerator struct {
 }
 
 func (g *EbsGenerator) volumeAttachmentID(device, volumeID, instanceID string) string {
-	return fmt.Sprintf("vai-%d", hashcode.String(fmt.Sprintf("%s-%s-%s-", device, instanceID, volumeID)))
+	return fmt.Sprintf("vai-%d", crc32.ChecksumIEEE([]byte(fmt.Sprintf("%s-%s-%s-", device, instanceID, volumeID))))
 }
 
 func (g *EbsGenerator) InitResources() error {

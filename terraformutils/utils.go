@@ -21,43 +21,12 @@ import (
 	"log"
 	"sync"
 
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/compatibility"
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper"
-
-	"github.com/hashicorp/terraform/terraform"
 )
 
 type BaseResource struct {
 	Tags map[string]string `json:"tags,omitempty"`
-}
-
-func NewTfState(resources []Resource) *terraform.State {
-	tfstate := &terraform.State{
-		Version:   terraform.StateVersion,
-		TFVersion: terraform.VersionString(), //nolint
-		Serial:    1,
-	}
-	outputs := map[string]*terraform.OutputState{}
-	for _, r := range resources {
-		for k, v := range r.Outputs {
-			outputs[k] = v
-		}
-	}
-	tfstate.Modules = []*terraform.ModuleState{
-		{
-			Path:      []string{"root"},
-			Resources: map[string]*terraform.ResourceState{},
-			Outputs:   outputs,
-		},
-	}
-	for _, resource := range resources {
-		resourceState := &terraform.ResourceState{
-			Type:     resource.InstanceInfo.Type,
-			Primary:  resource.InstanceState,
-			Provider: "provider." + resource.Provider,
-		}
-		tfstate.Modules[0].Resources[resource.InstanceInfo.Type+"."+resource.ResourceName] = resourceState
-	}
-	return tfstate
 }
 
 func PrintTfState(resources []Resource) ([]byte, error) {
@@ -69,12 +38,18 @@ func PrintTfStateWithProviderSource(resources []Resource, providerSource string)
 }
 
 type stateV4 struct {
-	Version          int               `json:"version"`
-	TerraformVersion string            `json:"terraform_version"`
-	Serial           uint64            `json:"serial"`
-	Lineage          string            `json:"lineage"`
-	Outputs          map[string]any    `json:"outputs"`
-	Resources        []resourceStateV4 `json:"resources"`
+	Version          int                      `json:"version"`
+	TerraformVersion string                   `json:"terraform_version"`
+	Serial           uint64                   `json:"serial"`
+	Lineage          string                   `json:"lineage"`
+	Outputs          map[string]outputStateV4 `json:"outputs"`
+	Resources        []resourceStateV4        `json:"resources"`
+}
+
+type outputStateV4 struct {
+	Value     interface{} `json:"value"`
+	Type      string      `json:"type"`
+	Sensitive bool        `json:"sensitive"`
 }
 
 type resourceStateV4 struct {
@@ -88,6 +63,7 @@ type resourceStateV4 struct {
 type resourceInstanceStateV4 struct {
 	SchemaVersion uint64          `json:"schema_version"`
 	Attributes    json.RawMessage `json:"attributes"`
+	Private       []byte          `json:"private,omitempty"`
 }
 
 func printTfStateV4(resources []Resource, providerSource string) ([]byte, error) {
@@ -97,11 +73,16 @@ func printTfStateV4(resources []Resource, providerSource string) ([]byte, error)
 	}
 	state := stateV4{
 		Version:          4,
-		TerraformVersion: terraform.VersionString(), //nolint
+		TerraformVersion: compatibility.TerraformVersion,
 		Serial:           1,
 		Lineage:          fmt.Sprintf("%x", lineageBytes),
-		Outputs:          map[string]any{},
+		Outputs:          map[string]outputStateV4{},
 		Resources:        make([]resourceStateV4, 0, len(resources)),
+	}
+	for _, resource := range resources {
+		for name, output := range resource.Outputs {
+			state.Outputs[name] = outputStateV4{Value: output.Value, Type: output.Type}
+		}
 	}
 
 	for _, resource := range resources {
@@ -116,6 +97,7 @@ func printTfStateV4(resources []Resource, providerSource string) ([]byte, error)
 			Instances: []resourceInstanceStateV4{{
 				SchemaVersion: resource.StateSchemaVersion,
 				Attributes:    resource.StateJSON,
+				Private:       resource.InstanceState.Private,
 			}},
 		})
 	}

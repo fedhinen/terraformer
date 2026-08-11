@@ -91,7 +91,7 @@ func (g *EksGenerator) PostConvertHook() error {
 			for cluster := range g.Resources {
 				if g.Resources[cluster].InstanceInfo.Type == "aws_eks_cluster" {
 					if g.Resources[cluster].Item["name"] == resource.Item["cluster_name"] {
-						resource.Item["cluster_name"] = "${aws_eks_cluster." + g.Resources[cluster].InstanceInfo.ResourceAddress().Name + ".name}"
+						resource.Item["cluster_name"] = "${aws_eks_cluster." + g.Resources[cluster].InstanceInfo.Name + ".name}"
 					}
 				}
 			}
