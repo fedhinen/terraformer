@@ -256,7 +256,11 @@ func printService(provider terraformutils.ProviderGenerator, serviceName string,
 	if err != nil {
 		return err
 	}
-	tfStateFile, err := terraformutils.PrintTfState(resources)
+	providerSource := "registry.terraform.io/hashicorp/" + provider.GetName()
+	if providerWithSource, ok := provider.(terraformutils.ProviderWithSource); ok {
+		providerSource = "registry.terraform.io/" + providerWithSource.GetSource()
+	}
+	tfStateFile, err := terraformutils.PrintTfStateWithProviderSource(resources, providerSource)
 	if err != nil {
 		return err
 	}

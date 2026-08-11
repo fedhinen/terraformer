@@ -1,5 +1,7 @@
 .idea
 generated
+tests/fixtures/aws-phase0/artifacts
+tests/fixtures/aws-phase0/.terraformer-data
 terraformer*
 cmd/tmp
 .DS_Store
