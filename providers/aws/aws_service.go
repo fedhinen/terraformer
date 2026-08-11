@@ -18,6 +18,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 
@@ -34,11 +35,26 @@ type AWSService struct { //nolint
 
 var awsVariable = regexp.MustCompile(`(\${[0-9A-Za-z:]+})`)
 
-var configCache *aws.Config
+type configCacheKey struct {
+	profile string
+	region  string
+}
+
+var (
+	configCache   = map[configCacheKey]aws.Config{}
+	configCacheMu sync.RWMutex
+)
 
 func (s *AWSService) generateConfig() (aws.Config, error) {
-	if configCache != nil {
-		return *configCache, nil
+	cacheKey := configCacheKey{
+		profile: s.GetArgs()["profile"].(string),
+		region:  s.GetArgs()["region"].(string),
+	}
+	configCacheMu.RLock()
+	cachedConfig, ok := configCache[cacheKey]
+	configCacheMu.RUnlock()
+	if ok {
+		return cachedConfig, nil
 	}
 
 	baseConfig, e := s.buildBaseConfig()
@@ -66,7 +82,9 @@ func (s *AWSService) generateConfig() (aws.Config, error) {
 			os.Setenv("AWS_SESSION_TOKEN", creds.SessionToken)
 		}
 	}
-	configCache = &baseConfig
+	configCacheMu.Lock()
+	configCache[cacheKey] = baseConfig
+	configCacheMu.Unlock()
 	return baseConfig, nil
 }
 
@@ -75,8 +93,12 @@ func (s *AWSService) buildBaseConfig() (aws.Config, error) {
 	if s.GetArgs()["profile"].(string) != "" {
 		loadOptions = append(loadOptions, config.WithSharedConfigProfile(s.GetArgs()["profile"].(string)))
 	}
-	if s.GetArgs()["region"].(string) != "" {
-		os.Setenv("AWS_REGION", s.GetArgs()["region"].(string))
+	region := s.GetArgs()["region"].(string)
+	if region == GlobalRegion {
+		region = MainRegionPublicPartition
+	}
+	if region != "" {
+		loadOptions = append(loadOptions, config.WithRegion(region))
 	}
 	loadOptions = append(loadOptions, config.WithAssumeRoleCredentialOptions(func(options *stscreds.AssumeRoleOptions) {
 		options.TokenProvider = stscreds.StdinTokenProvider

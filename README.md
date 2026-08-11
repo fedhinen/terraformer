@@ -27,54 +27,6 @@ A CLI tool that generates `tf`/`json` and `tfstate` files based on existing infr
         * [Google Cloud](/docs/gcp.md)
         * [AWS](/docs/aws.md)
         * [Azure](/docs/azure.md)
-        * [AliCloud](/docs/alicloud.md)
-        * [IBM Cloud](/docs/ibmcloud.md)
-    * Cloud
-        * [DigitalOcean](/docs/digitalocean.md)
-        * [Equinix Metal](/docs/equinixmetal.md)
-        * [Fastly](/docs/fastly.md)
-        * [Heroku](/docs/heroku.md)
-        * [LaunchDarkly](/docs/launchdarkly.md)
-        * [Linode](/docs/linode.md)
-        * [NS1](/docs/ns1.md)
-        * [OpenStack](/docs/openstack.md)
-        * [TencentCloud](/docs/tencentcloud.md)
-        * [Vultr](/docs/vultr.md)
-        * [Yandex Cloud](/docs/yandex.md)
-        * [Ionos Cloud](/docs/ionoscloud.md)
-    * Infrastructure Software
-        * [Kubernetes](/docs/kubernetes.md)
-        * [OctopusDeploy](/docs/octopus.md)
-        * [RabbitMQ](/docs/rabbitmq.md)
-    * Network
-        * [Cloudflare](/docs/cloudflare.md) (broken, see #1761)
-        * [Myrasec](/docs/myrasec.md)
-        * [PAN-OS](/docs/panos.md)
-    * VCS
-        * [Azure DevOps](/docs/azuredevops.md)
-        * [GitHub](/docs/github.md)
-        * [Gitlab](/docs/gitlab.md)
-    * Monitoring & System Management
-        * [Datadog](/docs/datadog.md)
-        * [New Relic](/docs/relic.md)
-        * [Mackerel](/docs/mackerel.md)
-        * [PagerDuty](/docs/pagerduty.md)
-        * [Opsgenie](/docs/opsgenie.md)
-        * [Honeycomb.io](/docs/honeycombio.md)
-        * [Opal](/docs/opal.md)
-    * Community
-        * [Keycloak](/docs/keycloak.md)
-        * [Logz.io](/docs/logz.md)
-        * [Commercetools](/docs/commercetools.md)
-        * [Mikrotik](/docs/mikrotik.md)
-        * [Xen Orchestra](/docs/xen.md)
-        * [GmailFilter](/docs/gmailfilter.md)
-        * [Grafana](/docs/grafana.md)
-        * [Vault](/docs/vault.md)
-    * Identity
-        * [Okta](/docs/okta.md)
-        * [Auth0](/docs/auth0.md)
-        * [AzureAD](/docs/azuread.md)
 - [Contributing](#contributing)
 - [Developing](#developing)
 - [Infrastructure](#infrastructure)
@@ -231,7 +183,7 @@ Both Terraformer and a Terraform provider plugin need to be installed.
 - [Chocolatey](https://chocolatey.org/) users can use `choco install terraformer`.
 
 **From releases**
-This installs all providers, set `PROVIDER` to one of `google`, `aws` or `kubernetes` if you only need one.
+This installs all providers; set `PROVIDER` to one of `google`, `aws` or `azure` if you only need one.
 
 * Linux
 ```
@@ -256,7 +208,7 @@ sudo mv terraformer-${PROVIDER}-darwin-amd64 /usr/local/bin/terraformer
 1.  Run `git clone <terraformer repo> && cd terraformer/`
 2.  Run `go mod download`
 3.  Run `go build -v` for all providers OR build with one provider
-`go run build/main.go {google,aws,azure,kubernetes,etc}`
+`go run build/main.go {google,aws,azure}`
 
 #### Terraform Providers
 
@@ -281,46 +233,6 @@ Links to download Terraform provider plugins:
     * Google Cloud provider >2.11.0 - [here](https://releases.hashicorp.com/terraform-provider-google/)
     * AWS provider >2.25.0 - [here](https://releases.hashicorp.com/terraform-provider-aws/)
     * Azure provider >1.35.0 - [here](https://releases.hashicorp.com/terraform-provider-azurerm/)
-    * Alicloud provider >1.57.1 - [here](https://releases.hashicorp.com/terraform-provider-alicloud/)
-* Cloud
-    * DigitalOcean provider >1.9.1 - [here](https://releases.hashicorp.com/terraform-provider-digitalocean/)
-    * Heroku provider >2.2.1 - [here](https://releases.hashicorp.com/terraform-provider-heroku/)
-    * LaunchDarkly provider >=2.1.1 - [here](https://releases.hashicorp.com/terraform-provider-launchdarkly/)
-    * Linode provider >1.8.0 - [here](https://releases.hashicorp.com/terraform-provider-linode/)
-    * OpenStack provider >1.21.1 - [here](https://releases.hashicorp.com/terraform-provider-openstack/)
-    * TencentCloud provider >1.50.0 - [here](https://releases.hashicorp.com/terraform-provider-tencentcloud/)
-    * Vultr provider >1.0.5 - [here](https://releases.hashicorp.com/terraform-provider-vultr/)
-    * Yandex provider >0.42.0 - [here](https://releases.hashicorp.com/terraform-provider-yandex/)
-    * Ionoscloud provider >6.3.3 - [here](https://github.com/ionos-cloud/terraform-provider-ionoscloud/releases)
-* Infrastructure Software
-    * Kubernetes provider >=1.9.0 - [here](https://releases.hashicorp.com/terraform-provider-kubernetes/)
-    * RabbitMQ provider >=1.1.0 - [here](https://releases.hashicorp.com/terraform-provider-rabbitmq/)
-* Network
-    * Myrasec provider >1.44 - [here](https://github.com/Myra-Security-GmbH/terraform-provider-myrasec)
-    * Cloudflare provider >1.16 - [here](https://releases.hashicorp.com/terraform-provider-cloudflare/)
-    * Fastly provider >0.16.1 - [here](https://releases.hashicorp.com/terraform-provider-fastly/)
-    * NS1 provider >1.8.3 - [here](https://releases.hashicorp.com/terraform-provider-ns1/)
-    * PAN-OS provider >= 1.8.3 - [here](https://github.com/PaloAltoNetworks/terraform-provider-panos)
-* VCS
-    * GitHub provider >=2.2.1 - [here](https://releases.hashicorp.com/terraform-provider-github/)
-* Monitoring & System Management
-    * Datadog provider >2.1.0 - [here](https://releases.hashicorp.com/terraform-provider-datadog/)
-    * New Relic provider >2.0.0 - [here](https://releases.hashicorp.com/terraform-provider-newrelic/)
-    * Mackerel provider > 0.0.6 - [here](https://github.com/mackerelio-labs/terraform-provider-mackerel)
-    * Pagerduty >=1.9 - [here](https://releases.hashicorp.com/terraform-provider-pagerduty/)
-    * Opsgenie >= 0.6.0 [here](https://releases.hashicorp.com/terraform-provider-opsgenie/)
-    * Honeycomb.io >= 0.10.0 - [here](https://github.com/honeycombio/terraform-provider-honeycombio/releases)
-    * Opal >= 0.0.2 - [here](https://github.com/opalsecurity/terraform-provider-opal/releases)
-* Community
-    * Keycloak provider >=1.19.0 - [here](https://github.com/mrparkers/terraform-provider-keycloak/)
-    * Logz.io provider >=1.1.1 - [here](https://github.com/jonboydell/logzio_terraform_provider/)
-    * Commercetools provider >= 0.21.0 - [here](https://github.com/labd/terraform-provider-commercetools)
-    * Mikrotik provider >= 0.2.2 - [here](https://github.com/ddelnano/terraform-provider-mikrotik)
-    * Xen Orchestra provider >= 0.18.0 - [here](https://github.com/ddelnano/terraform-provider-xenorchestra)
-    * GmailFilter provider >= 1.0.1 - [here](https://github.com/yamamoto-febc/terraform-provider-gmailfilter)
-    * Vault provider - [here](https://github.com/hashicorp/terraform-provider-vault)
-    * Auth0 provider - [here](https://github.com/alexkappa/terraform-provider-auth0)
-    * AzureAD provider - [here](https://github.com/hashicorp/terraform-provider-azuread)
 
 Information on provider plugins:
 https://www.terraform.io/docs/configuration/providers.html
@@ -379,7 +291,7 @@ go run providers/gcp/gcp_compute_code_generator/*.go
 
 ##### Terraformer Benefits
 
-* Simpler to add new providers and resources - already supports AWS, GCP, GitHub, Kubernetes, and Openstack. Terraforming supports only AWS.
+* Supports AWS, GCP, and Azure while keeping provider-specific discovery separate from the shared import pipeline. Terraforming supports only AWS.
 * Better support for HCL + tfstate, including updates for Terraform 0.12.
 * If a provider adds new attributes to a resource, there is no need change Terraformer code - just update the Terraform provider on your laptop.
 * Automatically supports connections between resources in HCL files.

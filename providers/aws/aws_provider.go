@@ -187,19 +187,11 @@ func (p *AWSProvider) Init(args []string) error {
 	p.region = args[0]
 	p.profile = args[1]
 
-	// Terraformer accepts region and profile configuration, so we must detect what env variables to adjust to make Go SDK rely on them. AWS_SDK_LOAD_CONFIG here must be checked to determine correct variable to set.
+	// The profile is exported so the Terraform provider process can use the same
+	// shared configuration. The SDK region is passed explicitly by AWSService;
+	// mutating AWS_REGION here would leak the last requested region to a later
+	// import in the same process.
 	enableSharedConfig, _ := strconv.ParseBool(os.Getenv("AWS_SDK_LOAD_CONFIG"))
-	var err error
-	if p.region != GlobalRegion && p.region != NoRegion {
-		if enableSharedConfig {
-			err = os.Setenv("AWS_DEFAULT_REGION", p.region)
-		} else {
-			err = os.Setenv("AWS_REGION", p.region)
-		}
-		if err != nil {
-			return err
-		}
-	}
 
 	if p.profile != "" && p.profile != "default" {
 		envVar := "AWS_PROFILE"
@@ -263,7 +255,7 @@ func (p *AWSProvider) GetSupportedService() map[string]terraformutils.ServiceGen
 		"datapipeline":      &AwsFacade{service: &DataPipelineGenerator{}},
 		"devicefarm":        &AwsFacade{service: &DeviceFarmGenerator{}},
 		"docdb":             &AwsFacade{service: &DocDBGenerator{}},
-		"dx":				 &AwsFacade{service: &DirectConnectGenerator{}},
+		"dx":                &AwsFacade{service: &DirectConnectGenerator{}},
 		"dynamodb":          &AwsFacade{service: &DynamoDbGenerator{}},
 		"ebs":               &AwsFacade{service: &EbsGenerator{}},
 		"ec2_instance":      &AwsFacade{service: &Ec2Generator{}},

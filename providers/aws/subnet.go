@@ -37,7 +37,11 @@ func (SubnetGenerator) createResources(subnets *ec2.DescribeSubnetsOutput) []ter
 			"aws",
 			SubnetAllowEmptyValues,
 		)
-		resource.IgnoreKeys = append(resource.IgnoreKeys, "availability_zone")
+		resource.IgnoreKeys = append(resource.IgnoreKeys,
+			"availability_zone",
+			"enable_lni_at_device_index",
+			"map_customer_owned_ip_on_launch",
+		)
 		resources = append(resources, resource)
 	}
 	return resources

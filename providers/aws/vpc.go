@@ -31,13 +31,15 @@ type VpcGenerator struct {
 func (VpcGenerator) createResources(vpcs *ec2.DescribeVpcsOutput) []terraformutils.Resource {
 	var resources []terraformutils.Resource
 	for _, vpc := range vpcs.Vpcs {
-		resources = append(resources, terraformutils.NewSimpleResource(
+		resource := terraformutils.NewSimpleResource(
 			StringValue(vpc.VpcId),
 			StringValue(vpc.VpcId),
 			"aws_vpc",
 			"aws",
 			VpcAllowEmptyValues,
-		))
+		)
+		resource.IgnoreKeys = append(resource.IgnoreKeys, "ipv6_netmask_length")
+		resources = append(resources, resource)
 	}
 	return resources
 }

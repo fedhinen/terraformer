@@ -24,20 +24,23 @@ import (
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper"
 	"github.com/hashicorp/terraform/terraform"
 	"github.com/zclconf/go-cty/cty"
+	ctyjson "github.com/zclconf/go-cty/cty/json"
 )
 
 type Resource struct {
-	InstanceInfo      *terraform.InstanceInfo
-	InstanceState     *terraform.InstanceState
-	Outputs           map[string]*terraform.OutputState `json:",omitempty"`
-	ResourceName      string
-	Provider          string
-	Item              map[string]interface{} `json:",omitempty"`
-	IgnoreKeys        []string               `json:",omitempty"`
-	AllowEmptyValues  []string               `json:",omitempty"`
-	AdditionalFields  map[string]interface{} `json:",omitempty"`
-	SlowQueryRequired bool
-	DataFiles         map[string][]byte
+	InstanceInfo       *terraform.InstanceInfo
+	InstanceState      *terraform.InstanceState
+	Outputs            map[string]*terraform.OutputState `json:",omitempty"`
+	ResourceName       string
+	Provider           string
+	Item               map[string]interface{} `json:",omitempty"`
+	IgnoreKeys         []string               `json:",omitempty"`
+	AllowEmptyValues   []string               `json:",omitempty"`
+	AdditionalFields   map[string]interface{} `json:",omitempty"`
+	SlowQueryRequired  bool
+	DataFiles          map[string][]byte
+	StateJSON          []byte
+	StateSchemaVersion uint64
 }
 
 type ApplicableFilter interface {
@@ -173,7 +176,20 @@ func (r *Resource) ConvertTFstate(provider *providerwrapper.ProviderWrapper) err
 	parser := NewFlatmapParser(r.InstanceState.Attributes, ignoreKeys, allowEmptyValues)
 	schema := provider.GetSchema()
 	impliedType := schema.ResourceTypes[r.InstanceInfo.Type].Block.ImpliedType()
-	return r.ParseTFstate(parser, impliedType)
+	if err := r.ParseTFstate(parser, impliedType); err != nil {
+		return err
+	}
+
+	stateValue, err := r.InstanceState.AttrsAsObjectValue(impliedType)
+	if err != nil {
+		return err
+	}
+	r.StateJSON, err = ctyjson.Marshal(stateValue, impliedType)
+	if err != nil {
+		return err
+	}
+	r.StateSchemaVersion = uint64(schema.ResourceTypes[r.InstanceInfo.Type].Version)
+	return nil
 }
 
 func (r *Resource) ServiceName() string {

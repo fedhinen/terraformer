@@ -15,7 +15,9 @@
 package terraformutils
 
 import (
-	"bytes"
+	"crypto/rand"
+	"encoding/json"
+	"fmt"
 	"log"
 	"sync"
 
@@ -59,10 +61,66 @@ func NewTfState(resources []Resource) *terraform.State {
 }
 
 func PrintTfState(resources []Resource) ([]byte, error) {
-	state := NewTfState(resources)
-	var buf bytes.Buffer
-	err := terraform.WriteState(state, &buf)
-	return buf.Bytes(), err
+	return PrintTfStateWithProviderSource(resources, "registry.terraform.io/hashicorp/aws")
+}
+
+func PrintTfStateWithProviderSource(resources []Resource, providerSource string) ([]byte, error) {
+	return printTfStateV4(resources, providerSource)
+}
+
+type stateV4 struct {
+	Version          int               `json:"version"`
+	TerraformVersion string            `json:"terraform_version"`
+	Serial           uint64            `json:"serial"`
+	Lineage          string            `json:"lineage"`
+	Outputs          map[string]any    `json:"outputs"`
+	Resources        []resourceStateV4 `json:"resources"`
+}
+
+type resourceStateV4 struct {
+	Mode      string                    `json:"mode"`
+	Type      string                    `json:"type"`
+	Name      string                    `json:"name"`
+	Provider  string                    `json:"provider"`
+	Instances []resourceInstanceStateV4 `json:"instances"`
+}
+
+type resourceInstanceStateV4 struct {
+	SchemaVersion uint64          `json:"schema_version"`
+	Attributes    json.RawMessage `json:"attributes"`
+}
+
+func printTfStateV4(resources []Resource, providerSource string) ([]byte, error) {
+	lineageBytes := make([]byte, 16)
+	if _, err := rand.Read(lineageBytes); err != nil {
+		return nil, fmt.Errorf("generating state lineage: %w", err)
+	}
+	state := stateV4{
+		Version:          4,
+		TerraformVersion: terraform.VersionString(), //nolint
+		Serial:           1,
+		Lineage:          fmt.Sprintf("%x", lineageBytes),
+		Outputs:          map[string]any{},
+		Resources:        make([]resourceStateV4, 0, len(resources)),
+	}
+
+	for _, resource := range resources {
+		if len(resource.StateJSON) == 0 {
+			return nil, fmt.Errorf("resource %s has no modern state representation", resource.InstanceInfo.Id)
+		}
+		state.Resources = append(state.Resources, resourceStateV4{
+			Mode:     "managed",
+			Type:     resource.InstanceInfo.Type,
+			Name:     resource.ResourceName,
+			Provider: fmt.Sprintf("provider[\"%s\"]", providerSource),
+			Instances: []resourceInstanceStateV4{{
+				SchemaVersion: resource.StateSchemaVersion,
+				Attributes:    resource.StateJSON,
+			}},
+		})
+	}
+
+	return json.MarshalIndent(state, "", "  ")
 }
 
 func RefreshResources(resources []*Resource, provider *providerwrapper.ProviderWrapper, slowProcessingResources [][]*Resource) ([]*Resource, error) {

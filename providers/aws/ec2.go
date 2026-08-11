@@ -94,6 +94,7 @@ func (g *Ec2Generator) PostConvertHook() error {
 		if r.InstanceInfo.Type != "aws_instance" {
 			continue
 		}
+		delete(r.Item, "primary_network_interface")
 		if r.Item["root_block_device"] == nil {
 			continue
 		}
